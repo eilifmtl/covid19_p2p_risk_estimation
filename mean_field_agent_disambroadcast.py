@@ -31,6 +31,8 @@ introduced by risk quantization.
 """
 
 import params
+from tqdm import tqdm
+import numpy
 
 class ContextObject(object):
     def __init__(self, t_exposed=0):
@@ -65,15 +67,16 @@ class Agent(object):
         self.p = prob_initial_infection
         self.history = {}
     
-    def prepare_message(self):
+    def prepare_message(self, quantizer=lambda x: x):
 
-        # TODO obfuscation
-        
-        msg = Message(self.p, self.id)
+        # quantizer
+        p = quantizer(self.p)
+        msg = Message(p, self.id)
          
         return msg
 
-    def recv_message(self, msg, context):
+    def recv_message(self, msg, context, quantizer=lambda x: x):
+        
         # Get the tranmission probability given the context
         _lambda = get_transmission_prob(context)
         
@@ -101,40 +104,40 @@ class Agent(object):
         h.r_dagger = (1.-_lambda)*(r_star + r_dagger)
 
         # Update to my model of the other's updates
-        est_r_star_other = max(0, self.p - h.last_p)
+        est_r_star_other = max(0, quantizer(self.p) - quantizer(h.last_p))
         h.est_p_star_other = min(msg.p + _lambda*(est_r_star_other + est_r_dagger_other), 1.0)
         h.est_r_dagger_other = (1.-_lambda)*(est_r_star_other + est_r_dagger_other)
-
+        
+        
         # update my p
         self.p += deltap
         self.p = min(self.p, 1.0)
-             
+        h.last_p = self.p 
         
-def start_contact(a, b):
-    """ start of a contact between agents a & b """
-    
-    msg_a = a.prepare_message()
-    msg_b = b.prepare_message()
 
-    return msg_a, msg_b
+def run(agents, interactions, quantizer=lambda x: x):
 
+    mf_PI = []
 
-# -------
-# Contact ends, and we can compute context
-#context = ContextObject(t_exposed=0)
-# -------
-# Note - check that: two exchanges of t_exposed/2 immediatly following
-# should be equivalent to one exchange of t_exposed
+    for i1, i2 in tqdm(interactions):
+        
+        a = agents[i1]
+        b = agents[i2]
 
+        # Broadcast quantized messages of my current P
+        msg_a = a.prepare_message(quantizer=quantizer)
+        msg_b = b.prepare_message(quantizer=quantizer)
 
-def end_contact(a, b, msg_a, msg_b, context):
-    """ end of a contact between agents a & b """
-    
-    a.recv_message(msg_b, context)
-    b.recv_message(msg_a, context)
+        # -------
+        # Contact ends, and we can compute context & t_exposed
+        context = ContextObject(t_exposed=0)
+        # -------
 
+        # Recieve messages, and context to compute risk update
+        a.recv_message(msg_b, context, quantizer=quantizer)
+        b.recv_message(msg_a, context, quantizer=quantizer)
 
-
-
+        mf_PI.append([x.p for x in agents])
+    return numpy.array(mf_PI) 
 
                  
